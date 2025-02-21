@@ -1,0 +1,651 @@
+//Consultas validación base de datos embebida
+
+//a. Locales y terrazas por barrio y distrito
+[
+  {
+    $group: { //Agrupa por barrio y distrito
+      _id: {
+        barrio: "$desc_barrio_local",
+        distrito: "$desc_distrito_local"
+      },
+      totalLocales: { $sum: 1 },
+      totalTerrazas: { //Verifica si el local tiene terraza
+        $sum: {
+          $cond: {
+            if: {
+              $and: [
+                { $not: { $eq: ["$terraza", []] } },
+                { $gt: [{ $size: { $ifNull: ["$terraza", []] } }, 0] }
+              ]
+            },
+            then: 1,
+            else: 0
+          }
+        }
+      }
+    }
+  },
+    {
+    $project: { //Selecciona campos a mostrar
+      _id: 0, // Excluye el campo _id
+      distrito: "$_id.distrito",
+      barrio: "$_id.barrio",
+      totalLocales: 1,
+      totalTerrazas: 1
+    }
+  },
+  {
+    $sort: { // Ordena por distrito y barrio
+      distrito: 1,
+      barrio: 1
+    }
+  } 
+]
+/////////////////////////////////////////
+//b. Tipos de licencias y cantidad.
+[
+  {
+    $unwind: "$licencias" // Desglosa el array de licencias
+  },
+  {
+    $group: {
+      _id: "$licencias.desc_tipo_licencia", // Agrupa por tipo de licencia
+      cantidad: { $sum: 1 } // Cuenta las licencias de cada tipo
+    }
+  },
+  {
+    $project: { //Selecciona los campos a mostrar
+      _id: 0, // Excluye el campo _id
+      tipo_licencia: "$_id", 
+      cantidad: 1 
+    }
+  },
+  {
+    $sort: { // Ordena por cantidad de licencias de mayor a menor
+      cantidad: -1 
+    }
+  }
+]
+////////////////////////////////////////
+//c. Locales y terrazas con licencias en tramitacion 
+[
+  {
+    $unwind: "$licencias" // Desglosa el array de licencias
+  },
+  {
+    $match: { // Verifica que la licencia este "En tramitación"
+      $expr: {
+        $regexMatch: {
+          input:
+            "$licencias.desc_tipo_situacion_licencia",
+          regex: "^En tramitación$",
+          options: "i"
+        }
+      }
+    }
+  },
+  {
+    $group: { //Agrupa los resultados
+      _id: "$id_local",
+      rotulo: { $first: "$rotulo" },
+      licencias_en_tramitacion: { $sum: 1 },
+      terraza: { $first: "$terraza" }
+    }
+  },
+  {
+    $project: { //Selecciona los campos a mostrar
+      _id: 0,
+      id_local: "$_id",
+      rotulo: 1,
+      terraza: 1,
+      licencias_en_tramitacion: 1
+    }
+  }
+]
+///////////////////////////////////////
+// d. Seccion, division y epígrafe 
+[
+  {
+    $unwind: "$actividades" // Se desglosa el array de actividades
+  },
+  {
+    $group: { //Se agrupa por seccion, division y epigrafe, y se maneja el caso vacio
+      _id: {
+        seccion: { $ifNull: ["$actividades.id_seccion", "Sin sección"] },
+        division: { $ifNull: ["$actividades.id_division", "Sin división"] }, 
+        epigrafe: { $ifNull: ["$actividades.id_epigrafe", "Sin epígrafe"] }, // 
+      	desc_epigrafe:{ $ifNull: ["$actividades.desc_epigrafe", "Sin describir epígrafe"]}
+      },
+      totalLocales: { $sum: 1 }, // Se cuentan los locales en cada grupo
+      locales: {
+        $push: { // Se agregan los locales a un array dentro de cada grupo
+          id_local: "$id_local",
+          rotulo: "$rotulo",
+          terraza: "$terraza"
+        }
+      }
+    }
+  },
+  {
+    $project: { // Se seleccionan los campos a mostrar
+      _id: 0,
+      seccion: "$_id.seccion", 
+      division: "$_id.division", 
+      epigrafe: "$_id.epigrafe",
+      totalLocales: 1, 
+      locales: 1, 
+      desc_epigrafe: "$_id.desc_epigrafe"
+    }
+  },
+  {
+    $sort: { // Se ordena por total de locales
+      totalLocales:-1
+    }
+  }
+]
+//////////////////////////////////////////////////////////
+//e. Actividad más frecuente por distrito y barrio
+[
+  {
+    $unwind: "$actividades" // Se desglosa el array de actividades 
+  },
+  {
+    $group: { //Se agrupa por distrito, barrio y actividad
+      _id: {
+        desc_distrito_local: "$desc_distrito_local",
+        desc_barrio_local: "$desc_barrio_local",
+        desc_epigrafe: "$actividades.desc_epigrafe"
+      },
+      count: { $sum: 1 } // Cuenta la frecuencia de cada combinación de distrito, barrio y actividad
+    }
+  },
+  {
+    $sort: { count: -1 } // Ordena los resultados por frecuencia de forma descendente
+  },
+  {
+    $group: { // Se agrupa solo por distrito y barrio
+      _id: {
+        desc_distrito_local: "$_id.desc_distrito_local",
+        desc_barrio_local: "$_id.desc_barrio_local"
+      },
+      actMasFrecuente: { $first: "$_id.desc_epigrafe" }, // Obtiene la actividad más frecuente 
+      cuentaMasFrecuente: { $first: "$count" } // Obtiene la frecuencia de la actividad más frecuente
+    }
+  },
+  {
+    $project: { //Se seleccionan los campos a mostrar
+      _id: 0,
+      distrito: "$_id.desc_distrito_local",
+      barrio: "$_id.desc_barrio_local",
+      actividad_mas_frecuente: "$actMasFrecuente",
+      frecuencia: "$cuentaMasFrecuente"
+    }
+  },
+  	{
+  	  $sort: {
+  	    frecuencia: -1
+  	  }
+  	}
+]
+///////////////////////////////////////////////////////////////
+//f. Cambio de horarios de Bares con Cocina en SALAMANCA
+
+//filtrado
+{
+  "actividades.desc_epigrafe": "BAR CON COCINA",
+  "desc_distrito_local": "SALAMANCA"
+}
+//actualización
+{
+  $set: {
+    hora_apertura1: "11:00",
+    hora_cierre1: "01:00"
+  }
+}
+
+//Consulta para verificar cambio
+[
+  {
+    $match: {
+      "actividades.desc_epigrafe": "BAR CON COCINA",
+      "desc_distrito_local": "SALAMANCA" // Filtrar por el distrito de Salamanca
+    }
+  },
+  {
+    $unwind: "$terraza" // Desglosa el array de terrazas para acceder a los horarios
+  },
+  {
+    $project: { // Selecciona los campos a mostrar
+      _id: 0, 
+      nombre_local: "$rotulo", 
+	  distrito: "$desc_distrito_local",
+      hora_apertura: "$hora_apertura1", 
+      hora_cierre: "$hora_cierre1" 
+    }
+  }
+]
+
+/////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
+
+///////////////////////INDICES//////////////////////////
+
+//Indice simple - Barrio
+
+db.locales_madrid.createIndex({desc_barrio_local: 1})
+
+//Consulta de locales con terraza en barrio que empiece con "A"
+[
+  {
+    $match: {
+      "terraza": { $exists: true, $not: { $size: 0 } }, // Filtra locales con terraza
+      "desc_barrio_local": { $regex: "^A" } // Filtra barrios que empiezan con "A"
+    }
+  },
+  {
+    $group: {
+      _id: "$desc_barrio_local", // Agrupa por barrio
+      totalLocalesConTerraza: { $sum: 1 } // Cuenta locales con terraza en cada barrio
+    }
+  },
+  {
+    $sort: { _id: 1 } // Ordena alfabéticamente por nombre de barrio
+  },
+  {
+    $project: { // Selecciona los campos a mostrar
+      _id: 0, 
+      nombre_barrio: "$_id", 
+      totalTerrazas: "$totalLocalesConTerraza" 
+    }
+  }
+]
+
+//El desempeño cambia bastante con o sin el index
+////////////////////////////////////////////////////
+//Inidice compuesto - Distrito y Barrio
+ 
+db.locales_madrid.createIndex({desc_distrito_local: 1, desc_barrio_local: 1})
+
+//Consulta de locales con terraza en distrito que empiece con C y Barrio A
+[
+  {
+    $match: {
+      terraza: {
+        $exists: true,
+        $not: { $size: 0 }
+      }, // Filtra locales con terraza
+      desc_distrito_local: { $regex: "^C" }, // Filtra distritos que empiezan con "C"
+      desc_barrio_local: { $regex: "^A" } // Filtra barrios que empiezan con "A"
+    }
+  },
+  {
+    $group: { //Agrupa por distrito y barrio
+      _id: {
+        distrito: "$desc_distrito_local",
+        barrio: "$desc_barrio_local"
+      },
+      totalLocalesConTerraza: { $sum: 1 }
+    }
+  },
+  {
+    $sort: { "_id.distrito": 1, "_id.barrio": 1 } // Ordena por distrito y luego por barrio
+  },
+  {
+    $project: { // Selecciona los campos a mostrar
+      _id: 0,
+      distrito: "$_id.distrito",
+      barrio: "$_id.barrio",
+      totalTerrazas: "$totalLocalesConTerraza"
+    }
+  }
+]
+// El desempeño también cambia con el index
+///////////////////////////////////////////////////////
+Indice de Array - Descripcion del epigrafe 
+
+db.locales_madrid.createIndex({"actividades.desc_epigrafe": 1})
+
+//Consulta de locales donde al menos una de sus actividades sea BAR CON COCINA
+[
+  {
+    $match: {
+      "actividades.desc_epigrafe": "BAR CON COCINA"
+    }
+  },
+  {
+    $count: "totalLocalesConBarCocina"
+  }
+]
+// El desempeño cambia con el index
+
+////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////
+/////////////Consultas con alojamientos/////////////////////////
+
+//a. Total de alojamientos, locales y terrazas por distrito y barrio
+
+[
+  {
+    $group: { //Agrupa los alojamientos por distrito y barrio
+      _id: {
+        distrito: "$distrito_airbnb",
+        barrio: "$barrio_airbnb"
+      },
+      total_alojamientos: { $sum: 1 }
+    }
+  },
+  
+  {
+    $lookup: { // Trae datos de locales_madrid usando el pipeline
+      from: "locales_madrid",
+      let: { distrito: "$_id.distrito", barrio: "$_id.barrio" },
+      pipeline: [
+        {
+          $match: { //Busca que concidan el distrito y barrio con los alojamientos
+            $expr: {
+              $and: [
+                { $eq: ["$desc_distrito_local", "$$distrito"] },
+                { $eq: ["$desc_barrio_local", "$$barrio"] }
+              ]
+            }
+          }
+        },
+        {
+          $group: { //Cuenta locales y terrazas
+            _id: null,
+            total_locales: { $sum: 1 },
+            total_terrazas: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$terraza", []] } }, 0] },
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ],
+      as: "locales"
+    }
+  },
+  {
+    $unwind: "$locales" // Desglosa el array "locales"
+  },
+  {
+    $project: { // Selecciona los campos mostrar 
+      _id: 0,
+      distrito: "$_id.distrito",
+      barrio: "$_id.barrio",
+      total_alojamientos: 1,
+      total_locales: "$locales.total_locales",
+      total_terrazas: "$locales.total_terrazas"
+    }
+  },
+  {
+    $sort:{ // Ordena por distrito y barrio
+      distrito: 1,
+      barrio: 1
+    }
+  }
+]
+
+//b. 5 barrios con mayor numero de alojamientos y terrazas con licencias concedidas hace 2 años o menos 
+//El to_date también se debería correr en Mongo para que funcione sin el hard code 
+
+[
+  {
+    $group: {
+      _id: {
+        distrito: "$distrito_airbnb",
+        barrio: "$barrio_airbnb"
+      },
+      total_alojamientos: {
+        $sum: 1
+      }
+    }
+  },
+  {
+    $lookup: {
+      from: "locales_madrid",
+      let: {
+        distrito: "$_id.distrito",
+        barrio: "$_id.barrio"
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                {
+                  $eq: [
+                    "$desc_distrito_local",
+                    "$$distrito"
+                  ]
+                },
+                {
+                  $eq: [
+                    "$desc_barrio_local",
+                    "$$barrio"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          $unwind: "$licencias"
+        },
+        {
+          $match: {
+            // Se agrega la condición para desc_situacion_licencia
+            $expr: {
+              $and: [
+                {
+                  $eq: [
+                    "$licencias.desc_tipo_situacion_licencia",
+                    "Concedida"
+                  ]
+                },
+                {
+                  $gte: [
+                    "$licencias.Fecha_Dec_Lic",
+                    "2023-02-08"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total_terrazas: {
+              $sum: {
+                $cond: [
+                  {
+                    $gt: [{$size: {$ifNull: ["$terraza",[]]}},0]},
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ],
+      as: "locales"
+    }
+  },
+  {
+    $unwind: "$locales"
+  },
+  {
+    $project: {
+      _id: 0,
+      distrito: "$_id.distrito",
+      barrio: "$_id.barrio",
+      total_alojamientos: 1,
+      total_terrazas: "$locales.total_terrazas"
+    }
+  },
+  {
+    $addFields: {
+      suma_total: {
+        $add: [
+          "$total_alojamientos",
+          "$total_terrazas"
+        ]
+      }
+    }
+  },
+  {
+    $sort: {
+      suma_total: -1
+    }
+  },
+  {
+    $limit: 5
+  }
+  
+]
+
+//c. Alojamientos con más reseñas por barrio y numero de locales con actividad comercial 
+// Más de 800 reseñas
+// Local que incluya COMERCIO AL POR MAYOR Y AL POR MENOR en desc_seccion 
+
+[
+  {
+    $match: // Se seleccionan alojamientos con más de 800 reseñas
+      {
+        numero_reseñas: {
+          $gte: 800
+        }
+      }
+  },
+  {
+    $lookup: // Se traen los locales de los mismos barrios que los alojamientos
+      {
+        from: "locales_madrid",
+        localField: "barrio_airbnb",
+        foreignField: "desc_barrio_local",
+        pipeline: [
+          {
+            $match: { // Se verifica que el local sea comercial
+              "actividades.desc_seccion": {
+                $regex:
+                  /COMERCIO AL POR MAYOR Y AL POR MENOR/
+              } 
+            }
+          }
+        ],
+        as: "locales"
+      }
+  },
+  {
+    $project: // Se seleccionan los campos a mostrar
+      {
+        _id: 0,
+        nombre_airbnb: 1,
+        numero_reseñas: 1,
+        locales_comerciales: {
+          $size: "$locales"
+        }
+      }
+  }
+]
+
+//d.Diferenciar los tipos de alojamientos por barrio teniendo en cuenta precio, reseñas, número de habitaciones y servicios
+//precio
+	//ECONOMICO <= 70
+	//REGULAR >70 < 180 
+	//CARO >= 180
+//reseñas (puntuacion) 
+	//MALO <= 3
+	//ACEPTABLE >3 <4
+	//BUENO >= 4 <= 4,5
+	//EXCELENTE > 4,5
+//numero de habitaciones
+	//PEQUEÑO 1
+	//MEDIANO 3 5
+	//GRANDE > 5
+//servicios
+	//SIN SERVICIOS 0
+	//BASICO 10
+	//REGULAR 25
+	//MUCHOS SERVICIOS >25
+	
+[
+  {
+    $project: { // Se crean las categorias
+      precio_categoria: {
+        $switch: {
+          branches: [
+            { case: { $lte: ["$precio", 70] }, then: "ECONOMICO" },
+            { case: { $and: [{ $gt: ["$precio", 70] }, { $lte: ["$precio", 180] }] }, then: "REGULAR" }
+          ],
+          default: "CARO"
+        }
+      },
+      puntuacion_categoria: {
+        $switch: {
+          branches: [
+            { case: { $lt: ["$puntuacion", 3] }, then: "MALO" },
+            { case: { $and: [{ $gte: ["$puntuacion", 3] }, { $lte: ["$puntuacion", 4] }] }, then: "ACEPTABLE" },
+            { case: { $and: [{ $gt: ["$puntuacion", 4] }, { $lte: ["$puntuacion", 4.5] }] }, then: "BUENO" }
+          ],
+          default: "EXCELENTE"
+        }
+      },
+      habitaciones_categoria: {
+        $switch: {
+          branches: [
+            { case: { $eq: ["$numero_habitaciones", 1] }, then: "PEQUEÑO" },
+            { case: { $and: [{ $gte: ["$numero_habitaciones", 3] }, { $lte: ["$numero_habitaciones", 5] }] }, then: "MEDIANO" }
+          ],
+          default: "GRANDE"
+        }
+      },
+      servicios_categoria: {
+        $switch: {
+          branches: [
+            { case: { $eq: [{ $size: "$servicios" }, 0] }, then: "SIN SERVICIOS" },
+            { case: { $and: [{ $gte: [{ $size: "$servicios" }, 1] }, { $lte: [{ $size: "$servicios" }, 10] }] }, then: "BASICO" },
+            { case: { $and: [{ $gte: [{ $size: "$servicios" }, 10] }, { $lte: [{ $size: "$servicios" }, 25] }] }, then: "REGULAR" }
+          ],
+          default: "MUCHOS"
+        }
+      },
+      barrio_airbnb: 1,
+      nombre_airbnb: 1 
+    }
+  },
+  {
+    $group: { // Se agrupan con respecto a las categorias creadas
+      _id: {
+        barrio: "$barrio_airbnb",
+        precio: "$precio_categoria",
+        puntuacion: "$puntuacion_categoria",
+        habitaciones: "$habitaciones_categoria",
+        servicios: "$servicios_categoria"
+      },
+      count: { $sum: 1 },
+      nombres_airbnb: { $addToSet: "$nombre_airbnb" } // Usamos $addToSet para evitar nombres repetidos
+    }
+  },
+  {
+    $group: {
+      _id: "$_id.barrio",
+      categorias: {
+        $push: {
+          precio: "$_id.precio",
+          puntuacion: "$_id.puntuacion",
+          habitaciones: "$_id.habitaciones",
+          servicios: "$_id.servicios",
+          count: "$count",
+          nombres_airbnb: "$nombres_airbnb" // Incluimos el array de nombres
+        }
+      }
+    }
+  },
+  { $sort: { "_id": 1, "categorias.precio": 1, "categorias.puntuacion": 1, "categorias.habitaciones": 1, "categorias.servicios": 1 } }
+]
